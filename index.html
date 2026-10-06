@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>Smart Receipt - ระบบตรวจสอบใบเสร็จด้วย AI (Gemini)</title>
+  <title>Smart Receipt - ระบบตรวจสอบใบเสร็จด้วย AI (Gemini) - V7</title>
   <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
@@ -376,6 +376,35 @@ const firebaseAuthReady = auth.signInAnonymously()
       margin-bottom: 20px;
       display: none;
       font-weight: 500;
+    }
+
+    /* ผลตรวจล่าสุด: แสดงค้างไว้จนกว่าจะตรวจเอกสารรายการใหม่ */
+    .scan-result-box {
+      display: none;
+      margin-top: 14px;
+      padding: 16px;
+      border-radius: 10px;
+      border: 1px solid #b6d4fe;
+      background: #e7f1ff;
+    }
+    .scan-result-box.pass {
+      border-color: #a3cfbb;
+      background: #d1e7dd;
+      color: #0f5132;
+    }
+    .scan-result-box.fail {
+      border-color: #f1aeb5;
+      background: #f8d7da;
+      color: #842029;
+    }
+    .scan-result-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .scan-result-reason {
+      white-space: pre-wrap;
+      line-height: 1.6;
     }
 
     .ocr-status {
@@ -764,6 +793,10 @@ const firebaseAuthReady = auth.signInAnonymously()
             <button type="submit" id="scanBtn" class="btn-scan-custom">ให้ AI ตรวจสอบเอกสาร</button>
             <div id="ocrStatus" class="ocr-status">
               <p id="ocrStatusText">กำลังส่งภาพให้ Gemini AI วิเคราะห์...</p>
+            </div>
+            <div id="scanResultBox" class="scan-result-box" aria-live="polite">
+              <div id="scanResultTitle" class="scan-result-title"></div>
+              <div id="scanResultReason" class="scan-result-reason"></div>
             </div>
           </div>
         </div>
@@ -1740,19 +1773,23 @@ async function loadVehicles() {
             var cycle = day <= 15 ? '1-15' : '16-31';
             var recordId = Date.now();
 
-            // แสดงผล AI ทันทีหลังตรวจเสร็จ โดยไม่รอการบันทึกประวัติ
-            // ทำให้มือถือเห็นเหตุผลแม้ขั้นตอน Firestore จะมีปัญหา
+            // แสดงผล AI ในแถบผลตรวจเฉพาะกิจ และค้างไว้บนหน้าสแกน
+            // จนกว่าจะตรวจเอกสารรายการใหม่ เพื่อไม่ให้รายละเอียดเหตุผลหายไปเอง
             var resultReason = (aiResult && aiResult.reason) ? aiResult.reason : 'AI ไม่ได้ส่งคำอธิบายรายละเอียด';
-            var resultBox = document.getElementById('alertBox');
-            if (aiResult && aiResult.match) {
-              resultBox.innerText = 'ตรวจสอบผ่าน: ' + resultReason;
-            } else {
-              resultBox.innerText = 'ตรวจสอบไม่ผ่าน: ' + resultReason;
+            var scanResultBox = document.getElementById('scanResultBox');
+            var scanResultTitle = document.getElementById('scanResultTitle');
+            var scanResultReason = document.getElementById('scanResultReason');
+            var isPassResult = !!(aiResult && aiResult.match);
+            if (scanResultBox && scanResultTitle && scanResultReason) {
+              scanResultBox.className = 'scan-result-box ' + (isPassResult ? 'pass' : 'fail');
+              scanResultTitle.innerText = isPassResult ? 'ตรวจสอบผ่าน' : 'ตรวจสอบไม่ผ่าน';
+              scanResultReason.innerText = 'รายละเอียดเหตุผล: ' + resultReason;
+              scanResultBox.style.display = 'block';
             }
-            resultBox.style.display = 'block';
 
             var newRecord = {
               id: recordId,
+              createdAt: recordId,
               date: billDateStr,
               month: month,
               year: dateObj.getFullYear(),
@@ -1797,8 +1834,11 @@ async function loadVehicles() {
             }
 
             statusBox.style.display = 'none';
-            resultBox.innerText = 'บันทึกประวัติเรียบร้อยแล้ว\n\n' + (aiResult && aiResult.match ? 'ผลตรวจ: ผ่าน' : 'ผลตรวจ: ไม่ผ่าน') + '\nเหตุผล: ' + resultReason;
-            resultBox.style.display = 'block';
+            if (scanResultBox && scanResultTitle && scanResultReason) {
+              scanResultTitle.innerText = (isPassResult ? 'ตรวจสอบผ่าน' : 'ตรวจสอบไม่ผ่าน') + ' — บันทึกประวัติเรียบร้อยแล้ว';
+              scanResultReason.innerText = 'รายละเอียดเหตุผล: ' + resultReason;
+              scanResultBox.style.display = 'block';
+            }
             await loadHistory();
             await loadDashboardStats();
             document.getElementById('docForm').reset();
@@ -1828,7 +1868,15 @@ async function loadVehicles() {
             };
           });
           history.sort(function(a, b) {
-            return String(b.date || '').localeCompare(String(a.date || '')) || String(b.id).localeCompare(String(a.id));
+            var aTime = Number(a.createdAt || a.id || 0);
+            var bTime = Number(b.createdAt || b.id || 0);
+
+            // รายการใหม่สุดอยู่ด้านบน โดยใช้เวลาที่บันทึกจริง ไม่ใช่วันที่บนใบเสร็จ
+            if (aTime && bTime && aTime !== bTime) return bTime - aTime;
+
+            // สำรองสำหรับรายการเก่าที่ไม่มี createdAt
+            return String(b.date || '').localeCompare(String(a.date || '')) ||
+                   String(b.id || '').localeCompare(String(a.id || ''));
           });
           window.smartReceiptHistoryCache = history;
           return history;
