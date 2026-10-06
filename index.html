@@ -911,7 +911,8 @@ const firebaseAuthReady = auth.signInAnonymously()
           var img = new Image();
           img.onload = function () {
             try {
-              var maxSide = 1400;
+              // จำกัดขนาด preview เพื่อไม่ให้เอกสาร Firestore เกิน 1 MiB
+              var maxSide = 1000;
               var scale = Math.min(1, maxSide / Math.max(img.width, img.height));
               var canvas = document.createElement('canvas');
               canvas.width = Math.max(1, Math.round(img.width * scale));
@@ -920,7 +921,12 @@ const firebaseAuthReady = auth.signInAnonymously()
               ctx.fillStyle = '#ffffff';
               ctx.fillRect(0, 0, canvas.width, canvas.height);
               ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-              resolve(canvas.toDataURL('image/jpeg', 0.65));
+
+              // ลดคุณภาพลงเป็นขั้น ๆ หาก preview ยังใหญ่เกินไป
+              var preview = canvas.toDataURL('image/jpeg', 0.55);
+              if (preview.length > 850000) preview = canvas.toDataURL('image/jpeg', 0.45);
+              if (preview.length > 850000) preview = canvas.toDataURL('image/jpeg', 0.35);
+              resolve(preview.length <= 850000 ? preview : '');
             } catch (e) {
               console.warn('สร้างภาพตัวอย่างไม่สำเร็จ:', e);
               resolve('');
@@ -1748,12 +1754,20 @@ async function loadVehicles() {
               fileDataUrl: cloudPreview || ''
             };
 
-            await saveFileToDB(recordId, file);
+            // บันทึกประวัติลง Firestore ก่อน เพื่อไม่ให้การเก็บไฟล์ใน IndexedDB
+            // บนมือถือขัดขวางการสร้างประวัติรายการใหม่
+            // ใช้ Firebase modular instance ที่เปิดให้ window ไว้สำหรับหน้าเว็บนี้
+            await window.addDoc(
+              window.collection(window.db, 'smartReceiptHistory'),
+              newRecord
+            );
 
-           await window.addDoc(
-    window.collection(window.db, 'smartReceiptHistory'),
-    newRecord
-);
+            // เก็บไฟล์ต้นฉบับไว้ใน IndexedDB ของเครื่องนี้ (ถ้าทำได้)
+            try {
+              await saveFileToDB(recordId, file);
+            } catch (fileErr) {
+              console.warn('เก็บไฟล์ในเครื่องไม่สำเร็จ แต่ประวัติถูกบันทึกแล้ว:', fileErr);
+            }
 
             statusBox.style.display = 'none';
             loadHistory();
