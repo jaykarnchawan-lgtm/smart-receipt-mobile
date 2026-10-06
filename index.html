@@ -1120,7 +1120,7 @@ const firebaseAuthReady = auth.signInAnonymously()
           var subJson = rawText.substring(firstOpen, lastClose + 1);
 
           // นำชุดนี้มาวางต่อท้ายทันที และเปลี่ยนเป็น jsonParsed
-          jsonParsed = JSON.parse(cleanedText);
+          jsonParsed = JSON.parse(subJson);
 
           let selectedCompanyName = document.getElementById('companyName').value;
           let suppliers = JSON.parse(localStorage.getItem('suppliers') || '[]');
@@ -1135,8 +1135,11 @@ const firebaseAuthReady = auth.signInAnonymously()
 
         }
 
-        
-} }
+} 
+
+        // ส่งผล JSON จาก Gemini กลับไปให้ขั้นตอนบันทึกประวัติและแสดงผล
+        return jsonParsed;
+      }
         /* =========================================================
            จัดการสิทธิ์ & UI
            ========================================================= */
@@ -1691,6 +1694,10 @@ async function loadVehicles() {
           statusBox.style.display = 'block';
 
             try {
+    // รอ Firebase Anonymous Login ให้เสร็จก่อนใช้งาน Firestore ทุกครั้ง
+    // เพื่อป้องกันมือถือยิงคำสั่งอ่าน/เขียนก่อน auth พร้อม
+    await firebaseAuthReady;
+
     // ดึงข้อมูลบริษัทจาก Firestore
     var snapshot = await db.collection('companies').get();
 
@@ -1733,7 +1740,16 @@ async function loadVehicles() {
             var cycle = day <= 15 ? '1-15' : '16-31';
             var recordId = Date.now();
 
-            var cloudPreview = await makeCloudPreview(file);
+            // แสดงผล AI ทันทีหลังตรวจเสร็จ โดยไม่รอการบันทึกประวัติ
+            // ทำให้มือถือเห็นเหตุผลแม้ขั้นตอน Firestore จะมีปัญหา
+            var resultReason = (aiResult && aiResult.reason) ? aiResult.reason : 'AI ไม่ได้ส่งคำอธิบายรายละเอียด';
+            var resultBox = document.getElementById('alertBox');
+            if (aiResult && aiResult.match) {
+              resultBox.innerText = 'ตรวจสอบผ่าน: ' + resultReason;
+            } else {
+              resultBox.innerText = 'ตรวจสอบไม่ผ่าน: ' + resultReason;
+            }
+            resultBox.style.display = 'block';
 
             var newRecord = {
               id: recordId,
@@ -1751,16 +1767,27 @@ async function loadVehicles() {
               statusClass: (aiResult && aiResult.match) ? 'badge-success' : 'badge-danger',
               reason: (aiResult && aiResult.reason) ? aiResult.reason : 'AI ไม่ได้ส่งคำอธิบายรายละเอียด',
               isPass: (aiResult && aiResult.match) ? aiResult.match : false,
-              fileDataUrl: cloudPreview || ''
             };
 
-            // บันทึกประวัติลง Firestore ก่อน เพื่อไม่ให้การเก็บไฟล์ใน IndexedDB
-            // บนมือถือขัดขวางการสร้างประวัติรายการใหม่
-            // ใช้ Firebase modular instance ที่เปิดให้ window ไว้สำหรับหน้าเว็บนี้
-            await window.addDoc(
-              window.collection(window.db, 'smartReceiptHistory'),
-              newRecord
-            );
+            // บันทึกประวัติด้วยข้อมูลข้อความเท่านั้นก่อน (ไม่แนบรูปขนาดใหญ่เข้า Firestore)
+            // ถ้า Anonymous Auth พร้อม ให้ใช้สิทธิ์นั้น; ถ้า Auth ล้มเหลว จะลองเขียนตรงหนึ่งครั้ง
+            // เพื่อให้ทราบชัดเจนว่ากฎ Firestore อนุญาตการสร้างข้อมูลหรือไม่
+            var savedHistoryDoc = null;
+            var authError = null;
+            try {
+              await firebaseAuthReady;
+            } catch (e) {
+              authError = e;
+              console.warn('Anonymous Auth ไม่พร้อม:', e);
+            }
+            try {
+              savedHistoryDoc = await db.collection('smartReceiptHistory').add(newRecord);
+            } catch (writeErr) {
+              console.error('บันทึกประวัติ Firestore ไม่สำเร็จ:', writeErr);
+              var detail = writeErr && writeErr.message ? writeErr.message : String(writeErr);
+              if (authError) detail += ' | Auth: ' + (authError.message || String(authError));
+              throw new Error('บันทึกประวัติไม่สำเร็จ: ' + detail);
+            }
 
             // เก็บไฟล์ต้นฉบับไว้ใน IndexedDB ของเครื่องนี้ (ถ้าทำได้)
             try {
@@ -1770,18 +1797,15 @@ async function loadVehicles() {
             }
 
             statusBox.style.display = 'none';
-            loadHistory();
-            loadDashboardStats();
+            resultBox.innerText = 'บันทึกประวัติเรียบร้อยแล้ว\n\n' + (aiResult && aiResult.match ? 'ผลตรวจ: ผ่าน' : 'ผลตรวจ: ไม่ผ่าน') + '\nเหตุผล: ' + resultReason;
+            resultBox.style.display = 'block';
+            await loadHistory();
+            await loadDashboardStats();
             document.getElementById('docForm').reset();
 
-                   if (!(aiResult && aiResult.match)) {
-            showFailModal((aiResult && aiResult.reason) ? aiResult.reason : 'ข้อมูลในบิลไม่ถูกต้องตามระบบบัญชี');
-        } else {
-            var box = document.getElementById('alertBox');
-            box.innerText = 'ตรวจสอบผ่าน: ' + ((aiResult && aiResult.reason) ? aiResult.reason : '');
-            box.style.display = 'block';
-            setTimeout(function () { box.style.display = 'none'; }, 5000);
-        }
+            if (!(aiResult && aiResult.match)) {
+              showFailModal(resultReason);
+            }
     } catch (err) {
         console.error(err);
         statusBox.style.display = 'none';
