@@ -2004,47 +2004,22 @@ async function loadVehicles() {
           });
         }
         </script>
-        <script type="module">
-  // Import the functions you need from the SDKs you need
- import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-import { getFirestore, collection, getDocs, addDoc, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
-import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
-// TODO: Add SDKs for Firebase products that you want to use
-  // https://firebase.google.com/docs/web/setup#available-libraries
-
-  // Your web app's Firebase configuration
-  const firebaseConfig = {
-    apiKey: "AIzaSyB2RChBf4qzDBPwWBB9ToKi6S-Mk1VnVO0",
-    authDomain: "smart-receipt-676d7.firebaseapp.com",
-    projectId: "smart-receipt-676d7",
-    storageBucket: "smart-receipt-676d7.firebasestorage.app",
-    messagingSenderId: "839467606920",
-    appId: "1:839467606920:web:b77fe7571525d62c3dd03d"
-  };
-
-  // Initialize Firebase
-   const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
-signInAnonymously(auth)
-  .then(() => {
-    console.log('Module Firebase Anonymous Login สำเร็จ');
-  })
-  .catch((error) => {
-    console.error('Module Firebase Login Error:', error);
-  });
+        <script>
+// ใช้ Firebase Compat ชุดเดียวกับด้านบน เพื่อไม่ให้เกิดการ initialize Firebase ซ้ำ
+// และทำให้ฟังก์ชัน Firestore ที่ส่วนอื่นของระบบเรียกผ่าน window ใช้งานได้ทั้งมือถือและคอม
 window.db = db;
-window.addDoc = addDoc;
-window.collection = collection;
-window.getDocs = getDocs;
-window.deleteDoc = deleteDoc;
-window.doc = doc;
-window.deleteSmartReceiptHistory = async function(id) {
-  var safeId = String(id);
-  await deleteDoc(doc(db, 'smartReceiptHistory', safeId));
-};
 window.auth = auth;
-window.signInAnonymously = signInAnonymously;
+window.collection = function (dbRef, path) { return dbRef.collection(path); };
+window.addDoc = function (collectionRef, data) { return collectionRef.add(data); };
+window.getDocs = function (queryRef) { return queryRef.get(); };
+window.deleteDoc = function (docRef) { return docRef.delete(); };
+window.doc = function (dbRef, path, id) { return dbRef.collection(path).doc(String(id)); };
+window.signInAnonymously = function () { return auth.signInAnonymously(); };
+window.deleteSmartReceiptHistory = async function (id) {
+  var safeId = String(id);
+  await db.collection('smartReceiptHistory').doc(safeId).delete();
+};
+console.log('Firebase bridge พร้อมใช้งาน');
 </script>
 
 </body>
