@@ -1571,7 +1571,7 @@ async function loadVehicles() {
                 snap.forEach(function(docSnap) {
                   var d = docSnap.data() || {};
                   if (String(docSnap.id) === String(id)) {
-                    rec = { id: docSnap.id, fileKey: d.id || docSnap.id, ...d };
+                    rec = { ...d, id: docSnap.id, fileKey: d.id || docSnap.id };
                     name = name || String(d.fileName || '');
                     type = type || String(d.fileType || '').toLowerCase();
                     dataUrl = d.fileDataUrl ? String(d.fileDataUrl) : '';
@@ -1862,9 +1862,9 @@ async function loadVehicles() {
           var history = snapshot.docs.map(function(doc) {
             var data = doc.data() || {};
             return {
+              ...data,
               id: doc.id,
-              fileKey: data.id || doc.id,
-              ...data
+              fileKey: data.id || doc.id
             };
           });
           history.sort(function(a, b) {
