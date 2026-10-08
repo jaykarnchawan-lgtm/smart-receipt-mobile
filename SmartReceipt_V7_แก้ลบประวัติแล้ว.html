@@ -1,0 +1,2099 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Smart Receipt - ระบบตรวจสอบใบเสร็จด้วย AI (Gemini) - V7</title>
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script>
+const firebaseConfig = {
+    apiKey: "AIzaSyB2RChBf4qzDBPwWBB9ToKi6S-Mk1VnVO0",
+    authDomain: "smart-receipt-676d7.firebaseapp.com",
+    projectId: "smart-receipt-676d7",
+    storageBucket: "smart-receipt-676d7.firebasestorage.app",
+    messagingSenderId: "839467606920",
+    appId: "1:839467606920:web:b77fe7571525d62c3dd03d"
+};
+
+firebase.initializeApp(firebaseConfig);
+
+const db = firebase.firestore();
+const auth = firebase.auth();
+
+// รอให้ Firebase Anonymous Login เสร็จก่อนอ่านข้อมูลบริษัท/รถ
+const firebaseAuthReady = auth.signInAnonymously()
+    .then(() => {
+        console.log("Firebase Anonymous Login สำเร็จ");
+    })
+    .catch((error) => {
+        console.error("Firebase Login Error:", error);
+        throw error;
+    });
+</script>
+<script>
+
+  function switchTab(tabId, btnElement) {
+          document.querySelectorAll('.tab-content').forEach(function (el) { el.classList.remove('active'); });
+          document.querySelectorAll('.nav-btn').forEach(function (el) { el.classList.remove('active'); });
+          document.getElementById(tabId).classList.add('active');
+          btnElement.classList.add('active');
+          localStorage.setItem('smartReceiptLastTab', tabId);
+          if (tabId === 'dashboard') loadDashboardStats();
+        }
+
+        function saveFilterPreferences() {
+          localStorage.setItem('smartReceiptFilterMonth', document.getElementById('filterMonth').value);
+          localStorage.setItem('smartReceiptFilterCycle', document.getElementById('filterCycle').value);
+        }
+
+        function loadFilterPreferences() {
+          var savedMonth = localStorage.getItem('smartReceiptFilterMonth');
+          var savedCycle = localStorage.getItem('smartReceiptFilterCycle');
+          if (savedMonth) document.getElementById('filterMonth').value = savedMonth;
+          if (savedCycle) document.getElementById('filterCycle').value = savedCycle;
+        }
+        async function initData() {
+          loadApiKey();
+          updateRoleUI();
+          loadFilterPreferences();
+
+          try {
+            await firebaseAuthReady;
+          } catch (authError) {
+            console.error('Firebase พร้อมใช้งานไม่ได้:', authError);
+          }
+
+          await loadHistory();
+          await loadDashboardStats();
+          await loadSuppliers();
+          await loadVehicles();
+
+          var lastTab = localStorage.getItem('smartReceiptLastTab') || 'dashboard';
+          var targetBtn = document.getElementById('btn-' + lastTab) || document.querySelector('.nav-btn');
+          switchTab(lastTab, targetBtn);
+        }
+  </script>
+
+<style>
+ 
+    :root {
+      --primary-blue: #0d6efd;
+      --primary-hover: #0b5ed7;
+      --success-green: #198754;
+      --excel-green: #107c41;
+      --warning-yellow: #ffc107;
+      --danger-red: #dc3545;
+      --bg-color: #f4f6f9;
+      --card-bg: #ffffff;
+      --text-main: #333333;
+      --text-muted: #6c757d;
+      --border-color: #dee2e6;
+      --radius: 10px;
+    }
+
+    body {
+      font-family: 'Sarabun', sans-serif;
+      background-color: var(--bg-color);
+      margin: 0;
+      padding: 25px;
+      color: var(--text-main);
+    }
+
+    .container {
+      max-width: 1050px;
+      margin: 0 auto;
+      background: var(--card-bg);
+      padding: 30px;
+      border-radius: var(--radius);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
+    }
+
+    .app-header {
+      background: #e9ecef;
+      padding: 18px 20px;
+      border-radius: var(--radius);
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 15px;
+    }
+
+    .app-title h1 {
+      margin: 0;
+      color: var(--primary-blue);
+      font-size: 26px;
+      font-weight: 700;
+    }
+
+    .app-title p {
+      margin: 4px 0 0 0;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .api-key-box {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: #fff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+
+    .api-key-box input {
+      border: none;
+      padding: 4px;
+      font-size: 13px;
+      width: 180px;
+      outline: none;
+    }
+
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      background: #e9ecef;
+      padding: 12px 18px;
+      border-radius: var(--radius);
+      font-size: 14px;
+    }
+
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 25px;
+      background: #e9ecef;
+      padding: 6px;
+      border-radius: var(--radius);
+    }
+
+    .nav-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      padding: 12px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-muted);
+      transition: all 0.2s;
+    }
+
+    .nav-btn:hover {
+      color: var(--text-main);
+    }
+
+    .nav-btn.active {
+      background: var(--primary-blue);
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(13, 110, 253, 0.3);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    .form-group.full-width {
+      grid-column: span 2;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      box-sizing: border-box;
+      font-size: 14px;
+      font-family: inherit;
+      background: #fff;
+      transition: border-color 0.2s;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: var(--primary-blue);
+      box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+    }
+
+    .btn-primary {
+      background: var(--primary-blue);
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      width: 100%;
+      font-size: 16px;
+      transition: background 0.2s;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+    }
+
+    .btn-scan-custom {
+      background: var(--primary-blue);
+      color: white;
+      border: none;
+      padding: 16px 20px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 17px;
+      display: block;
+      width: 50%;
+      margin: 10px auto 0 auto;
+      box-shadow: 0 4px 12px rgba(13, 110, 253, 0.3);
+      transition: all 0.2s;
+    }
+
+    .btn-scan-custom:hover {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn-scan-custom:disabled {
+      background: #adb5bd;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .btn-danger {
+      background: var(--danger-red);
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .btn-danger:hover {
+      opacity: 0.9;
+    }
+
+    .btn-eye {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 2px 4px;
+      vertical-align: middle;
+      transition: transform 0.1s;
+    }
+
+    .btn-eye:hover {
+      transform: scale(1.2);
+    }
+
+    .btn-admin {
+      background: var(--success-green);
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .btn-logout-admin {
+      background: var(--warning-yellow);
+      color: #212529;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .btn-export-excel {
+      background: var(--excel-green);
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .btn-clear-all {
+      background: #6c757d;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .alert-box {
+      padding: 12px;
+      background: #d1e7dd;
+      color: #0f5132;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: none;
+      font-weight: 500;
+    }
+
+    /* ผลตรวจล่าสุด: แสดงค้างไว้จนกว่าจะตรวจเอกสารรายการใหม่ */
+    .scan-result-box {
+      display: none;
+      margin-top: 14px;
+      padding: 16px;
+      border-radius: 10px;
+      border: 1px solid #b6d4fe;
+      background: #e7f1ff;
+    }
+    .scan-result-box.pass {
+      border-color: #a3cfbb;
+      background: #d1e7dd;
+      color: #0f5132;
+    }
+    .scan-result-box.fail {
+      border-color: #f1aeb5;
+      background: #f8d7da;
+      color: #842029;
+    }
+    .scan-result-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .scan-result-reason {
+      white-space: pre-wrap;
+      line-height: 1.6;
+    }
+
+    .ocr-status {
+      display: none;
+      margin-top: 15px;
+      padding: 14px 16px;
+      background: #e7f1ff;
+      border: 1px solid #b6d4fe;
+      border-radius: 10px;
+      text-align: center;
+    }
+
+    .ocr-status p {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      color: #084298;
+    }
+
+    .table-container {
+      overflow-x: auto;
+      margin-top: 15px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 12px 15px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    th {
+      background-color: #f8f9fa;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .badge-success {
+      background: #d1e7dd;
+      color: #0f5132;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .badge-danger {
+      background: #f8d7da;
+      color: #842029;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .restricted-notice {
+      background: #fff3cd;
+      color: #856404;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+      font-size: 14px;
+      display: none;
+    }
+
+    .stats-card {
+      background: #f8f9fa;
+      border: 1px solid var(--border-color);
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+    }
+
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      z-index: 999;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(2px);
+      justify-content: center;
+      align-items: center;
+    }
+
+    .modal-content {
+      background: #fff;
+      padding: 30px;
+      border-radius: 12px;
+      text-align: center;
+      max-width: 430px;
+      width: 90%;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+      border-top: 6px solid var(--danger-red);
+    }
+
+    .modal-content h2 {
+      color: var(--danger-red);
+      margin-top: 0;
+      font-size: 22px;
+    }
+
+    .btn-modal {
+      background: var(--danger-red);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      margin-top: 15px;
+      font-size: 15px;
+      width: 100%;
+    }
+
+    .image-modal-content {
+      background: #fff;
+      padding: 20px;
+      border-radius: 12px;
+      text-align: center;
+      max-width: 650px;
+      width: 90%;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .image-container {
+      overflow: auto;
+      margin: 15px 0;
+      max-height: 65vh;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      background: #f8f9fa;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .image-container img {
+      max-width: 100%;
+      height: auto;
+      object-fit: contain;
+    }
+
+    .text-box {
+      text-align: left;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 13px;
+      line-height: 1.7;
+      background: #f8f9fa;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 14px;
+      max-height: 60vh;
+      overflow: auto;
+      margin: 15px 0;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 10px;
+      }
+
+      .container {
+        padding: 15px;
+      }
+
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .form-group.full-width {
+        grid-column: span 1;
+      }
+
+      .nav-tabs {
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .btn-scan-custom {
+        width: 100%;
+      }
+    }
+  </style>
+    <link rel="icon" href="data:,">
+  </head>
+
+<body>
+
+  <div id="failModal" class="modal-backdrop">
+    <div class="modal-content">
+      <h2>ไม่ผ่านการตรวจสอบ</h2>
+      <p id="failModalText" style="font-size: 15px; color: var(--text-muted); margin: 15px 0;">
+        ข้อมูลในบิลไม่ถูกต้องตามเงื่อนไข</p>
+      <button class="btn-modal" onclick="closeFailModal()">รับทราบ</button>
+    </div>
+  </div>
+
+  <div id="imageModal" class="modal-backdrop">
+    <div class="image-modal-content">
+      <h3 id="imageModalTitle" style="margin-top: 0; color: var(--primary-blue);">รูปภาพบิลเอกสาร</h3>
+      <div class="image-container"><img id="previewReceiptImg" src="" alt="รูปบิลเอกสาร"></div>
+      <div style="text-align: right;"><button
+          style="background: #6c757d; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;"
+          onclick="closeImageModal()">ปิดหน้าต่าง</button></div>
+    </div>
+  </div>
+
+  <div id="textModal" class="modal-backdrop">
+    <div class="image-modal-content">
+      <h3 style="margin-top: 0; color: var(--primary-blue);">ผลการวิเคราะห์จาก Gemini AI</h3>
+      <div id="extractedTextBox" class="text-box"></div>
+      <div style="text-align: right;"><button
+          style="background: #6c757d; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;"
+          onclick="closeTextModal()">ปิดหน้าต่าง</button></div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="app-header">
+      <div class="app-title">
+        <h1>Smart Receipt</h1>
+        <p>ระบบตรวจสอบใบเสร็จอัจฉริยะ (ขับเคลื่อนด้วย Gemini AI Vision)</p>
+      </div>
+      <div class="api-key-box">
+        <label for="geminiApiKey" style="margin:0; font-size:12px;">Gemini API Key:</label>
+        <input type="password" id="geminiApiKey" placeholder="วาง API Key ที่นี่..." onchange="saveApiKey()">
+      </div>
+    </div>
+
+    <div class="header-bar">
+      <div><strong>สถานะผู้ใช้งาน:</strong> <span id="currentRoleDisplay"
+          style="color: var(--primary-blue); font-weight: bold;">ผู้ใช้งานทั่วไป (User)</span></div>
+      <div>
+        <span id="adminControlArea"><button class="btn-admin" onclick="promptAdminLogin()">เข้าสู่ระบบ
+            Admin</button></span>
+        <span id="userControlArea" style="display: none;"><button class="btn-logout-admin"
+            onclick="logoutAdmin()">ออกจากระบบ Admin</button></span>
+      </div>
+    </div>
+
+    <div class="nav-tabs">
+      <button id="btn-dashboard" class="nav-btn active" onclick="switchTab('dashboard', this)">Dashboard
+        (สรุปสถิติ)</button>
+      <button id="btn-upload" class="nav-btn" onclick="switchTab('upload', this)">อัปโหลด/สแกนเอกสาร</button>
+      <button id="btn-supplier" class="nav-btn" onclick="switchTab('supplier', this)">จัดการข้อมูลบริษัท
+        (ลูกค้า)</button>
+      <button id="btn-vehicle" class="nav-btn" onclick="switchTab('vehicle', this)">Vehicle Master</button>
+    </div>
+
+    <div id="alertBox" class="alert-box">ตรวจสอบเอกสารผ่านเรียบร้อย!</div>
+
+    <div id="dashboard" class="tab-content active">
+      <div
+        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+        <h2 style="margin: 0; font-size: 20px;">Dashboard - สรุปภาพรวมและสถิติสำคัญ</h2>
+        <button class="btn-export-excel" onclick="exportReportToExcel()">ส่งออกรายงานเป็น Excel</button>
+      </div>
+
+      <div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 200px;">
+          <label for="filterMonth">เลือกเดือน:</label>
+          <select id="filterMonth" onchange="saveFilterPreferences(); loadDashboardStats();">
+            <option value="all">ทุกเดือน (ภาพรวม)</option>
+            <option value="01">มกราคม</option>
+            <option value="02">กุมภาพันธ์</option>
+            <option value="03">มีนาคม</option>
+            <option value="04">เมษายน</option>
+            <option value="05">พฤษภาคม</option>
+            <option value="06">มิถุนายน</option>
+            <option value="07">กรกฎาคม</option>
+            <option value="08">สิงหาคม</option>
+            <option value="09">กันยายน</option>
+            <option value="10">ตุลาคม</option>
+            <option value="11">พฤศจิกายน</option>
+            <option value="12">ธันวาคม</option>
+          </select>
+        </div>
+        <div style="flex: 1; min-width: 200px;">
+          <label for="filterCycle">รอบการเบิกจ่าย:</label>
+          <select id="filterCycle" onchange="saveFilterPreferences(); loadDashboardStats();">
+            <option value="all">ทุกรอบ</option>
+            <option value="1-15">รอบวันที่ 1 - 15</option>
+            <option value="16-31">รอบวันที่ 16 - 31</option>
+          </select>
+        </div>
+      </div>
+
+      <div
+        style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 25px;">
+        <div class="stats-card" style="border-left: 4px solid var(--primary-blue);">
+          <h4 style="margin:0 0 4px 0; color:var(--text-muted); font-size: 13px;">เอกสารทั้งหมด</h4>
+          <span id="statTotal" style="font-size: 20px; font-weight: bold; color: var(--primary-blue);">0</span> <span
+            style="font-size: 13px; color: var(--text-muted);">บิล</span>
+        </div>
+        <div class="stats-card" style="border-left: 4px solid var(--success-green);">
+          <h4 style="margin:0 0 4px 0; color:var(--text-muted); font-size: 13px;">ถูกต้อง (ผ่าน)</h4>
+          <span id="statPass" style="font-size: 20px; font-weight: bold; color: var(--success-green);">0</span> <span
+            style="font-size: 13px; color: var(--text-muted);">บิล</span>
+        </div>
+        <div class="stats-card" style="border-left: 4px solid var(--danger-red);">
+          <h4 style="margin:0 0 4px 0; color:var(--text-muted); font-size: 13px;">ไม่ถูกต้อง</h4>
+          <span id="statFail" style="font-size: 20px; font-weight: bold; color: var(--danger-red);">0</span> <span
+            style="font-size: 13px; color: var(--text-muted);">บิล</span>
+          <div id="failTypeBreakdown"
+            style="margin-top: 8px; font-size: 12px; color: #a94442; border-top: 1px dashed #ebccd1; padding-top: 6px;">
+            -</div>
+        </div>
+      </div>
+
+      <h3 style="font-size: 18px;">สถิติแยกตามรายบริษัท</h3>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>ชื่อบริษัทลูกค้า</th>
+              <th>จำนวนบิลทั้งหมด</th>
+              <th>ถูกต้อง (ผ่าน)</th>
+              <th>ไม่ถูกต้อง</th>
+            </tr>
+          </thead>
+          <tbody id="companyStatsTableBody">
+            <tr>
+              <td colspan="4" style="text-align: center; color: var(--text-muted);">ยังไม่มีข้อมูลสถิติ</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="upload" class="tab-content">
+      <h2 style="font-size: 20px; margin-top: 0;">อัปโหลดบิลหรือใบเสร็จให้ Gemini AI ตรวจสอบ</h2>
+      <form id="docForm" onsubmit="handleUpload(event)">
+        <div class="form-grid">
+          <div class="form-group full-width">
+            <label for="docFile">ถ่ายภาพ / แนบไฟล์บิล (รองรับภาพถ่าย, ลายมือ, และ PDF)</label>
+            <input type="file" id="docFile" accept="image/*,.pdf" capture="environment" required>
+            <small style="color: var(--text-muted); font-size: 13px; display: block; margin-top: 6px;">* AI
+              จะอ่านวันที่จากบิลโดยตรง และตรวจสอบชื่อบริษัท ประเภทเอกสาร ทะเบียนรถให้อัตโนมัติ</small>
+          </div>
+          <div class="form-group">
+            <label for="documentType">ประเภทเอกสารที่เลือก</label>
+            <select id="documentType" required>
+              <option value="">-- เลือกประเภท --</option>
+              <option value="บิลน้ำมัน">บิลน้ำมัน</option>
+              <option value="ใบเสร็จรับเงิน">ใบเสร็จรับเงิน</option>
+              <option value="ใบกำกับภาษี">ใบกำกับภาษี</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="companyName">เลือกชื่อบริษัท</label>
+            <select id="companyName" required>
+              <option value="">-- เลือกชื่อบริษัท --</option>
+            </select>
+          </div>
+          <div class="form-group full-width">
+            <label for="carPlate">เลือกเลขทะเบียนรถยนต์ (จำเป็นสำหรับบิลน้ำมัน)</label>
+            <select id="carPlate">
+              <option value="">-- เลือกทะเบียนรถ --</option>
+            </select>
+          </div>
+          <div class="form-group full-width"
+            style="background: #e9ecef; padding: 12px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <span style="font-size: 13px; color: #555;">ไฟล์บิลถูกเก็บปลอดภัยในเบราว์เซอร์ของคุณ</span>
+            <button type="button" class="btn-clear-all" onclick="clearAllData()">ล้างประวัติทั้งหมด</button>
+          </div>
+          <div class="form-group full-width">
+            <button type="submit" id="scanBtn" class="btn-scan-custom">ให้ AI ตรวจสอบเอกสาร</button>
+            <div id="ocrStatus" class="ocr-status">
+              <p id="ocrStatusText">กำลังส่งภาพให้ Gemini AI วิเคราะห์...</p>
+            </div>
+            <div id="scanResultBox" class="scan-result-box" aria-live="polite">
+              <div id="scanResultTitle" class="scan-result-title"></div>
+              <div id="scanResultReason" class="scan-result-reason"></div>
+            </div>
+          </div>
+        </div>
+      </form>
+
+      <h3 style="font-size: 18px; margin-top: 30px;">ประวัติเอกสารและผลการตรวจสอบ</h3>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>วันที่ในบิล / รอบ</th>
+              <th>ชื่อไฟล์</th>
+              <th>ประเภท</th>
+              <th>บริษัทลูกค้า</th>
+              <th>ผลการตรวจสอบ</th>
+              <th>จัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="historyTableBody">
+            <tr>
+              <td colspan="6" style="text-align: center; color: var(--text-muted);">ยังไม่มีประวัติการบันทึกเอกสาร</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="supplier" class="tab-content">
+      <h2 style="font-size: 20px; margin-top: 0;">จัดการข้อมูลบริษัท (ฝั่งลูกค้า)</h2>
+      <div id="adminNoticeSup" class="restricted-notice">แจ้งเตือน: สิทธิ์ User
+        ทั่วไปไม่สามารถเพิ่มหรือลบข้อมูลบริษัทได้ (ต้องเข้าสู่ระบบ Admin)</div>
+      <form id="supplierForm" onsubmit="saveSupplier(event)">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="supName">ชื่อบริษัทของคุณ (ลูกค้า)</label>
+            <input type="text" id="supName" placeholder="เช่น บริษัท ของเรา จำกัด" required>
+          </div>
+          <div class="form-group">
+            <label for="supTaxId">เลขประจำตัวผู้เสียภาษี (13 หลัก)</label>
+            <input type="text" id="supTaxId" placeholder="เช่น 01055xxxxxxxx" maxlength="13" required>
+          </div>
+          <div class="form-group full-width">
+            <label for="supKeywords">ชื่อย่อ / คำค้นอื่น (ไม่บังคับ)</label>
+            <input type="text" id="supKeywords" placeholder="เช่น ชื่อย่อในบิล">
+          </div>
+          <div class="form-group full-width">
+            <label for="supAddress">ที่อยู่บริษัท</label>
+            <textarea id="supAddress" rows="2" placeholder="ที่อยู่..." required></textarea>
+          </div>
+        </div>
+        <button type="submit" class="btn-primary" style="width: auto;">บันทึกข้อมูลบริษัท</button>
+      </form>
+
+      <h3 style="font-size: 18px; margin-top: 25px;">รายชื่อบริษัททั้งหมดในระบบ</h3>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>ชื่อบริษัท</th>
+              <th>เลขผู้เสียภาษี</th>
+              <th>คำค้น</th>
+              <th>ที่อยู่</th>
+              <th id="thActionSup" style="width: 80px;">จัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="supplierTableBody">
+            <tr>
+              <td colspan="5" style="text-align: center; color: var(--text-muted);">ยังไม่มีข้อมูลบริษัท</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="vehicle" class="tab-content">
+      <h2 style="font-size: 20px; margin-top: 0;">Vehicle Master (จัดการทะเบียนรถ)</h2>
+      <div id="adminNoticeVeh" class="restricted-notice">แจ้งเตือน: สิทธิ์ User ทั่วไปไม่สามารถเพิ่มทะเบียนรถใหม่ได้
+        (ต้องเข้าสู่ระบบ Admin)</div>
+      <form id="vehicleForm" onsubmit="saveVehicle(event)">
+        <div class="form-group">
+          <label for="newPlate">เพิ่มเลขทะเบียนรถ</label>
+          <input type="text" id="newPlate" placeholder="เช่น 1 กข 1234" required>
+        </div>
+        <button type="submit" class="btn-primary" style="width: auto;">บันทึกทะเบียนรถ</button>
+      </form>
+
+      <h3 style="font-size: 18px; margin-top: 25px;">รายการรถทั้งหมด</h3>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>เลขทะเบียนรถ</th>
+              <th id="thActionVeh" style="width: 80px;">จัดการ</th>
+            </tr>
+          </thead>
+          <tbody id="vehicleTableBody">
+            <tr>
+              <td colspan="2" style="text-align: center; color: var(--text-muted);">ยังไม่มีข้อมูลรถ</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const ADMIN_PASSWORD = "admin123";
+
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    const DB_NAME = 'smartReceiptGeminiDB';
+    const STORE_NAME = 'files';
+
+    function openDB() {
+      return new Promise(function (resolve, reject) {
+        var req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = function (e) {
+          var db = e.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+        };
+        req.onsuccess = function (e) { resolve(e.target.result); };
+        req.onerror = function (e) { reject(e.target.error); };
+      });
+    }
+
+    async function saveFileToDB(key, blob) {
+      var db = await openDB();
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put(blob, String(key));
+        tx.oncomplete = function () { resolve(true); };
+        tx.onerror = function (e) { reject(e.target.error); };
+      });
+    }
+
+    // สร้างสำเนาไฟล์ขนาดเล็กสำหรับเก็บใน Firestore เพื่อให้มือถือ/คอมเครื่องอื่นดูบิลได้
+    async function makeCloudPreview(file) {
+      return new Promise(function (resolve) {
+        if (!file) return resolve('');
+
+        // รูปภาพ: ย่อให้ไม่เกิน 1400px และบีบอัดเป็น JPEG เพื่อลดขนาดเอกสาร Firestore
+        if (file.type && file.type.indexOf('image/') === 0) {
+          var img = new Image();
+          img.onload = function () {
+            try {
+              // จำกัดขนาด preview เพื่อไม่ให้เอกสาร Firestore เกิน 1 MiB
+              var maxSide = 1000;
+              var scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+              var canvas = document.createElement('canvas');
+              canvas.width = Math.max(1, Math.round(img.width * scale));
+              canvas.height = Math.max(1, Math.round(img.height * scale));
+              var ctx = canvas.getContext('2d');
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+              // ลดคุณภาพลงเป็นขั้น ๆ หาก preview ยังใหญ่เกินไป
+              var preview = canvas.toDataURL('image/jpeg', 0.55);
+              if (preview.length > 850000) preview = canvas.toDataURL('image/jpeg', 0.45);
+              if (preview.length > 850000) preview = canvas.toDataURL('image/jpeg', 0.35);
+              resolve(preview.length <= 850000 ? preview : '');
+            } catch (e) {
+              console.warn('สร้างภาพตัวอย่างไม่สำเร็จ:', e);
+              resolve('');
+            }
+          };
+          img.onerror = function () { resolve(''); };
+          img.src = URL.createObjectURL(file);
+          return;
+        }
+
+        // PDF: เก็บเป็น Data URL เฉพาะเมื่อไฟล์เล็กพอ
+        if (file.type === 'application/pdf' || (file.name || '').toLowerCase().endsWith('.pdf')) {
+          if (file.size > 700 * 1024) return resolve('');
+        }
+
+        var reader = new FileReader();
+        reader.onload = function () {
+          var data = reader.result || '';
+          // เผื่อพื้นที่ให้ Firestore document อื่น ๆ
+          resolve(data.length <= 850000 ? data : '');
+        };
+        reader.onerror = function () { resolve(''); };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function getFileFromDB(key) {
+      var db = await openDB();
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE_NAME, 'readonly');
+        var req = tx.objectStore(STORE_NAME).get(String(key));
+        req.onsuccess = function () { resolve(req.result || null); };
+        req.onerror = function (e) { reject(e.target.error); };
+      });
+    }
+
+    async function deleteFileFromDB(key) {
+      var db = await openDB();
+      return new Promise(function (resolve) {
+        var tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).delete(String(key));
+        tx.oncomplete = function () { resolve(true); };
+        tx.onerror = function () { resolve(false); };
+      });
+    }
+
+    async function clearAllFilesInDB() {
+      var db = await openDB();
+      return new Promise(function (resolve) {
+        var tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).clear();
+        tx.oncomplete = function () { resolve(true); };
+        tx.onerror = function () { resolve(false); };
+      });
+    }
+
+    function saveApiKey() {
+      var key = document.getElementById('geminiApiKey').value.trim();
+      localStorage.setItem('geminiApiKey', key);
+    }
+
+    function loadApiKey() {
+      var key = localStorage.getItem('geminiApiKey') || '';
+      if (key) document.getElementById('geminiApiKey').value = key;
+    }
+
+    async function clearAllData() {
+      if (!confirm('ต้องการล้างประวัติทั้งหมดหรือไม่?')) return;
+      localStorage.removeItem('smartReceiptHistory');
+      await clearAllFilesInDB();
+      loadHistory();
+      loadDashboardStats();
+      alert('ล้างข้อมูลเรียบร้อย');
+    }
+
+    /* =========================================================
+       Gemini AI Vision Integration
+       ========================================================= */
+
+    function fileToGenerativePart(file, base64Data) {
+      return {
+        inlineData: {
+          data: base64Data.split(',')[1],
+          mimeType: file.type || 'image/jpeg'
+        },
+      };
+    }
+
+    async function analyzeReceiptWithGemini(file, dataUrl, targetCompany, taxId, targetDocType, selectedCarPlate) {
+      var apiKey = localStorage.getItem('geminiApiKey') || document.getElementById('geminiApiKey').value.trim();
+      if (!apiKey) {
+        throw new Error('กรุณากรอก Gemini API Key ที่มุมบนขวาก่อนใช้งาน');
+      }
+
+      if (targetDocType === 'บิลน้ำมัน' && !selectedCarPlate) {
+        throw new Error('กรุณาเลือกเลขทะเบียนรถให้ถูกต้องสำหรับบิลน้ำมัน');
+      }
+
+      var promptText =
+        "คุณคือ AI ตรวจสอบเอกสารการเงินในมุมมองของ 'ผู้ซื้อหรือลูกค้า'\n" +
+        "กฎการตรวจสอบอย่างเข้มงวด:\n" +
+        "1. อ่านและดึงวันที่ที่ปรากฏบนบิล (รูปแบบ YYYY-MM-DD หากเป็นไปได้) ส่งกลับมาในฟิลด์ docDate\n" +
+        "2. ตรวจสอบชื่อ 'ผู้ซื้อ/ลูกค้า' ในบิลว่าตรงกับบริษัทลูกค้าของเราคือ '" + targetCompany + "' (หรือเลขผู้เสียภาษี '" + taxId + "') หรือไม่\n" +
+        "3. ตรวจสอบเนื้อหาในบิลเทียบกับประเภทเอกสารที่ผู้ใช้เลือกคือ '" + targetDocType + "':\n" +
+        "   - หากผู้ใช้เลือก 'บิลน้ำมัน': เนื้อหาต้องเป็นการซื้อน้ำมัน และในบิลต้องระบุ 'เลขทะเบียนรถ' ที่ตรงกับ '" + selectedCarPlate + "' เป๊ะๆ (หรือใกล้เคียงที่สื่อถึงคันเดียวกัน) รวมถึงต้องมี 'เลขไมล์' ด้วย ถ้าเลขทะเบียนในบิลไม่ตรงกับ '" + selectedCarPlate + "' หรือไม่มีเลขทะเบียน/เลขไมล์ ให้ถือว่า match เป็น false ทันที\n" +
+        "   - หากผู้ใช้เลือก 'ใบเสร็จรับเงิน' หรือ 'ใบกำกับภาษี': เนื้อหาต้องเป็นการซื้อสินค้า/บริการทั่วไป (ไม่ใช่บิลน้ำมันรถ)\n" +
+        "4. ถ้าเงื่อนไขข้อใดข้อหนึ่งไม่ตรง ให้กำหนดค่า 'match' เป็น false ทันที\n" + " - ห้ามคาดเดาหรือแก้ไขตัวเลขหรือตัวอักษรใดๆ บนบิลเองเด็ดขาด ให้อ่านและดึงค่าตามสภาพจริงที่ปรากฏบนภาพเท่านั้น\n" +
+
+        "5. ตอบกลับในรูปแบบ JSON เท่านั้น โดยมีโครงสร้างดังนี้:\n" +
+        "{\n" +
+        "  \"match\": true หรือ false,\n" +
+        "  \"docDate\": \"วันที่ที่อ่านได้จากบิล (เช่น 2026-05-10 หรือระบุตามบิล)\",\n" +
+        "  \"reason\": \"คำอธิบายสั้นๆ ว่าพบชื่อลูกค้า ประเภทเอกสาร และตรวจสอบเลขทะเบียนรถถูกต้องหรือไม่\",\n" +
+        "  \"extractedText\": \"ข้อความทั้งหมดที่คุณอ่านได้จากบิลนี้\"\n" +
+        "}";
+
+      var imagePart = fileToGenerativePart(file, dataUrl);
+
+      var listRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models?key=' + apiKey);
+      if (!listRes.ok) {
+        throw new Error('API Key ไม่ถูกต้อง หรือไม่สามารถเชื่อมต่อกับ Google ได้');
+      }
+      var listData = await listRes.json();
+
+      var availableModels = [];
+      if (listData.models) {
+        listData.models.forEach(function (m) {
+          var name = m.name.replace('models/', '');
+          if (m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent') && name.includes('flash')) {
+            availableModels.push(name);
+          }
+        });
+      }
+
+      if (availableModels.length === 0) {
+        availableModels = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+      }
+
+      var response = null;
+      var lastError = '';
+
+      for (var i = 0; i < availableModels.length; i++) {
+        var modelName = availableModels[i];
+        var apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':generateContent?key=' + apiKey;
+
+        try {
+          response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { text: promptText },
+                  imagePart
+                ]
+              }],
+              generationConfig: { responseMimeType: "application/json" }
+            })
+          });
+
+          if (response.ok) {
+            break;
+          } else {
+            var errJson = await response.json().catch(function () { });
+            lastError = errJson && errJson.error ? errJson.error.message : 'API Error: ' + response.status;
+          }
+        } catch (ex) {
+          lastError = ex.message;
+        }
+      }
+
+      if (!response || !response.ok) {
+        throw new Error(lastError || 'ไม่สามารถประมวลผลผ่านโมเดลใดๆ ได้ในขณะนี้');
+      }
+
+      var resultData = await response.json();
+
+
+
+
+      var rawText = resultData.candidates[0].content.parts[0].text;
+
+      var cleanedText = rawText.replace(/[\u0000-\u001F]+/g, "");
+      var jsonParsed;
+      try {
+        jsonParsed = JSON.parse(cleanedText);
+      } catch (e) {
+        var firstOpen = rawText.indexOf('{');
+        var lastClose = rawText.lastIndexOf('}');
+        if (firstOpen !== -1 && lastClose !== -1) {
+          var subJson = rawText.substring(firstOpen, lastClose + 1);
+
+          // นำชุดนี้มาวางต่อท้ายทันที และเปลี่ยนเป็น jsonParsed
+          jsonParsed = JSON.parse(subJson);
+
+          let selectedCompanyName = document.getElementById('companyName').value;
+          let suppliers = JSON.parse(localStorage.getItem('suppliers') || '[]');
+          let matchedSupplier = suppliers.find(function (s) { return s.name === selectedCompanyName; });
+          let correctTaxId = matchedSupplier ? matchedSupplier.taxId : '';
+
+          if (correctTaxId && jsonParsed && jsonParsed.taxId && jsonParsed.taxId !== correctTaxId) {
+            document.getElementById('failModalText').innerText = "เลขประจำตัวผู้เสียภาษีไม่ถูกต้อง: " + jsonParsed.taxId;
+            document.getElementById('failModal').style.display = 'block';
+            return;
+          }
+
+        }
+
+} 
+
+        // ส่งผล JSON จาก Gemini กลับไปให้ขั้นตอนบันทึกประวัติและแสดงผล
+        return jsonParsed;
+      }
+        /* =========================================================
+           จัดการสิทธิ์ & UI
+           ========================================================= */
+
+        function getCurrentRole() { return sessionStorage.getItem('userRole') || 'user'; }
+
+        function promptAdminLogin() {
+          var pass = prompt("กรุณากรอกรหัสผ่านผู้ดูแลระบบ (Admin Password):");
+          if (pass === null) return;
+          if (pass === ADMIN_PASSWORD) {
+            sessionStorage.setItem('userRole', 'admin');
+            alert('เข้าสู่ระบบ Admin สำเร็จ!');
+            updateRoleUI();
+          } else { alert('รหัสผ่านไม่ถูกต้อง!'); }
+        }
+
+        function logoutAdmin() {
+          sessionStorage.setItem('userRole', 'user');
+          alert('ออกจากระบบ Admin เรียบร้อย');
+          updateRoleUI();
+        }
+
+        function updateRoleUI() {
+          var role = getCurrentRole();
+          var roleDisplay = document.getElementById('currentRoleDisplay');
+          var adminControlArea = document.getElementById('adminControlArea');
+          var userControlArea = document.getElementById('userControlArea');
+          var supplierForm = document.getElementById('supplierForm');
+          var adminNoticeSup = document.getElementById('adminNoticeSup');
+          var thActionSup = document.getElementById('thActionSup');
+          var vehicleForm = document.getElementById('vehicleForm');
+          var adminNoticeVeh = document.getElementById('adminNoticeVeh');
+          var thActionVeh = document.getElementById('thActionVeh');
+
+          if (role === 'admin') {
+            roleDisplay.innerHTML = 'ผู้ดูแลระบบ (Admin)';
+            roleDisplay.style.color = 'var(--success-green)';
+            adminControlArea.style.display = 'none';
+            userControlArea.style.display = 'inline-block';
+            supplierForm.style.display = 'block';
+            adminNoticeSup.style.display = 'none';
+            if (thActionSup) thActionSup.style.display = 'table-cell';
+            vehicleForm.style.display = 'block';
+            adminNoticeVeh.style.display = 'none';
+            if (thActionVeh) thActionVeh.style.display = 'table-cell';
+          } else {
+            roleDisplay.innerHTML = 'ผู้ใช้งานทั่วไป (User)';
+            roleDisplay.style.color = 'var(--primary-blue)';
+            adminControlArea.style.display = 'inline-block';
+            userControlArea.style.display = 'none';
+            supplierForm.style.display = 'none';
+            adminNoticeSup.style.display = 'block';
+            if (thActionSup) thActionSup.style.display = 'none';
+            vehicleForm.style.display = 'none';
+            adminNoticeVeh.style.display = 'block';
+            if (thActionVeh) thActionVeh.style.display = 'none';
+          }
+          loadSuppliers();
+          loadVehicles();
+        }
+
+        
+        async function loadSuppliers() {
+    var companySelect = document.getElementById('companyName');
+    var supplierTableBody = document.getElementById('supplierTableBody');
+    var role = getCurrentRole();
+
+    try {
+        // ดึงข้อมูลบริษัททั้งหมดจาก Firestore
+        var snapshot = await db.collection('companies').get();
+
+        // แปลงข้อมูล Firestore ให้เป็นรูปแบบที่ระบบเดิมใช้งาน
+        var suppliers = [];
+
+        snapshot.forEach(function(doc) {
+            var data = doc.data();
+
+            suppliers.push({
+                id: doc.id,
+                name: data.companyName || '',
+                taxId: data.taxID || '',
+                address: data.address || '',
+                keywords: data.keywords || ''
+            });
+        });
+
+        // แสดงรายชื่อบริษัทในช่องเลือกบริษัท
+        if (companySelect) {
+            companySelect.innerHTML =
+                '<option value="">-- เลือกชื่อบริษัท --</option>';
+
+            suppliers.forEach(function(s) {
+                companySelect.innerHTML +=
+                    '<option value="' + s.name + '">' +
+                    s.name +
+                    '</option>';
+            });
+        }
+
+        // แสดงข้อมูลบริษัทในตาราง
+        if (supplierTableBody) {
+
+            if (suppliers.length === 0) {
+                supplierTableBody.innerHTML =
+                    '<tr><td colspan="' + (role === 'admin' ? 5 : 4) +
+                    '" style="text-align:center; color:var(--text-muted);">' +
+                    'ยังไม่มีข้อมูลบริษัท</td></tr>';
+
+            } else {
+
+                supplierTableBody.innerHTML = '';
+
+                suppliers.forEach(function(s, index) {
+
+                    var del =
+                        role === 'admin'
+                            ? '<td><button class="btn-danger" onclick="deleteSupplier(' +
+                              index +
+                              ')">ลบ</button></td>'
+                            : '';
+
+                    supplierTableBody.innerHTML +=
+                        '<tr>' +
+                        '<td><strong>' + s.name + '</strong></td>' +
+                        '<td>' + s.taxId + '</td>' +
+                        '<td>' + (s.keywords || '-') + '</td>' +
+                        '<td>' + s.address + '</td>' +
+                        del +
+                        '</tr>';
+                });
+            }
+        }
+
+        console.log('โหลดข้อมูลบริษัทจาก Firestore สำเร็จ:', suppliers);
+    } catch (error) {
+        console.error('โหลดข้อมูลบริษัทจาก Firestore ไม่สำเร็จ:', error);
+
+        try {
+            await firebaseAuthReady;
+            var retrySnapshot = await db.collection('companies').get();
+            var retrySuppliers = [];
+
+            retrySnapshot.forEach(function(doc) {
+                var data = doc.data();
+                retrySuppliers.push({
+                    id: doc.id,
+                    name: data.companyName || '',
+                    taxId: data.taxID || '',
+                    address: data.address || '',
+                    keywords: data.keywords || ''
+                });
+            });
+
+            if (companySelect) {
+                companySelect.innerHTML = '<option value="">-- เลือกชื่อบริษัท --</option>';
+                retrySuppliers.forEach(function(s) {
+                    if (s.name) {
+                        companySelect.innerHTML +=
+                            '<option value="' + String(s.name).replace(/"/g, '&quot;') + '">' +
+                            String(s.name).replace(/</g, '&lt;') +
+                            '</option>';
+                    }
+                });
+            }
+            suppliers = retrySuppliers;
+        } catch (retryError) {
+            console.error('ลองโหลดข้อมูลบริษัทซ้ำไม่สำเร็จ:', retryError);
+            if (supplierTableBody) {
+                supplierTableBody.innerHTML =
+                    '<tr><td colspan="' + (role === 'admin' ? 5 : 4) +
+                    '" style="text-align:center; color:red;">' +
+                    'ไม่สามารถโหลดข้อมูลบริษัทจาก Firebase ได้ กรุณารีเฟรชหน้า' +
+                    '</td></tr>';
+            }
+        }
+    }
+}
+function isValidTaxId(taxId) {
+    if (!taxId) return false;
+    var id = String(taxId).replace(/[^0-9]/g, '');
+    if (id.length !== 13) return false;
+    if (/^(\d)\1{12}$/.test(id)) return false;
+
+    var sum = 0;
+    for (var i = 0; i < 12; i++) {
+        sum += parseInt(id.charAt(i), 10) * (13 - i);
+    }
+    var check = (11 - (sum % 11)) % 10;
+    return check === parseInt(id.charAt(12), 10);
+}
+        async function saveSupplier(e) {
+          e.preventDefault();
+          if (getCurrentRole() !== 'admin') return alert('เฉพาะ Admin เท่านั้น');
+          var name = document.getElementById('supName').value.trim();
+          var taxId = document.getElementById('supTaxId').value.trim();
+          var keywords = document.getElementById('supKeywords').value.trim();
+          var address = document.getElementById('supAddress').value.trim();
+          if (!isValidTaxId(taxId)) {
+    return alert('เลขประจำตัวผู้เสียภาษีไม่ถูกต้อง\nกรุณาตรวจสอบอีกครั้ง (ต้องเป็นตัวเลข 13 หลักที่ถูกต้องตามรูปแบบสรรพากร)');
+}
+
+          if (name && taxId && address) {
+      await db.collection('companies').add({
+    companyName: name,
+    taxID: taxId,
+    address: address,
+    keywords: keywords
+});
+            document.getElementById('supName').value = '';
+            document.getElementById('supTaxId').value = '';
+            document.getElementById('supKeywords').value = '';
+            document.getElementById('supAddress').value = '';
+            loadSuppliers();
+            alert('บันทึกข้อมูลบริษัทเรียบร้อย!');
+          }
+        }
+
+        async function deleteSupplier(index) {
+          console.log('DELETE CLICKED, index =', index);
+          await window.signInAnonymously(window.auth);
+
+    if (getCurrentRole() !== 'admin') return;
+
+    if (confirm('คุณต้องการลบข้อมูลบริษัทนี้ใช่หรือไม่?')) {
+        try {
+            const snapshot = await window.getDocs(window.collection(window.db, 'companies'));
+            const companyDocs = snapshot.docs;
+
+            if (!companyDocs[index]) {
+                alert('ไม่พบข้อมูลบริษัทที่ต้องการลบ');
+                return;
+            }
+
+            await window.deleteDoc(window.doc(window.db, 'companies', companyDocs[index].id));
+
+            await loadSuppliers();
+
+            alert('ลบข้อมูลบริษัทเรียบร้อยแล้ว!');
+        } catch (error) {
+            console.error('ลบข้อมูลบริษัทไม่สำเร็จ:', error);
+            alert('ลบข้อมูลบริษัทไม่สำเร็จ: ' + error.message);
+        }
+    }
+}
+window.deleteSupplier = deleteSupplier;
+
+var vehicleDocs = [];        
+async function loadVehicles() {
+    try {
+        const snapshot = await window.getDocs(
+            window.collection(window.db, 'vehicles')
+        );
+
+        vehicleDocs = snapshot.docs;
+
+        var vehicles = snapshot.docs.map(function(doc) {
+            return doc.data().plate;
+        });
+
+        console.log('โหลดข้อมูลทะเบียนรถจาก Firestore สำเร็จ:', vehicles);
+
+        var plateSelect = document.getElementById('carPlate');
+        var vehicleTableBody = document.getElementById('vehicleTableBody');
+        var role = getCurrentRole();
+
+        if (plateSelect) {
+            plateSelect.innerHTML =
+                '<option value="">-- เลือกทะเบียนรถ --</option>';
+
+            vehicles.forEach(function(v) {
+                plateSelect.innerHTML +=
+                    '<option value="' + v + '">' + v + '</option>';
+            });
+        }
+
+        if (vehicleTableBody) {
+            if (vehicles.length === 0) {
+                vehicleTableBody.innerHTML =
+                    '<tr><td colspan="' + (role === 'admin' ? 2 : 1) +
+                    '" style="text-align:center;">ยังไม่มีข้อมูลทะเบียนรถ</td></tr>';
+            } else {
+                vehicleTableBody.innerHTML = '';
+
+                vehicles.forEach(function(v, index) {
+                    var del = role === 'admin'
+                        ? '<td><button class="btn-danger" onclick="deleteVehicle(' +
+                          index + ')">ลบ</button></td>'
+                        : '';
+
+                    vehicleTableBody.innerHTML +=
+                        '<tr><td>' + v + '</td>' + del + '</tr>';
+                });
+            }
+        }
+
+    } catch (error) {
+        console.error('โหลดข้อมูลทะเบียนรถไม่สำเร็จ:', error);
+        alert('โหลดข้อมูลทะเบียนรถไม่สำเร็จ: ' + error.message);
+    }
+}
+
+        async function saveVehicle(e) {
+    e.preventDefault();
+
+    if (getCurrentRole() !== 'admin') return;
+
+    const val = document.getElementById('newPlate').value.trim();
+
+    if (!val) return;
+
+    try {
+        await window.addDoc(
+            window.collection(window.db, 'vehicles'),
+            {
+                plate: val,
+                createdAt: new Date().toISOString()
+            }
+        );
+
+        document.getElementById('newPlate').value = '';
+
+        await loadVehicles();
+
+        alert('บันทึกทะเบียนรถเรียบร้อย!');
+    } catch (error) {
+        console.error('เพิ่มทะเบียนรถไม่สำเร็จ:', error);
+        alert('เพิ่มทะเบียนรถไม่สำเร็จ: ' + error.message);
+    }
+}
+
+      async function deleteVehicle(index) {
+    if (getCurrentRole() !== 'admin') return;
+
+    if (confirm('คุณต้องการลบทะเบียนรถนี้ใช่หรือไม่?')) {
+        try {
+            const vehicleDoc = vehicleDocs[index];
+
+            if (!vehicleDoc) {
+                alert('ไม่พบข้อมูลทะเบียนรถที่ต้องการลบ');
+                return;
+            }
+
+            await window.deleteDoc(vehicleDoc.ref);
+
+            await loadVehicles();
+
+            alert('ลบทะเบียนรถเรียบร้อย!');
+        } catch (error) {
+            console.error('ลบทะเบียนรถไม่สำเร็จ:', error);
+            alert('ลบทะเบียนรถไม่สำเร็จ: ' + error.message);
+        }
+    }
+}
+
+        function showFailModal(message) {
+          document.getElementById('failModalText').innerText = message;
+          document.getElementById('failModal').style.display = 'flex';
+        }
+        function closeFailModal() { document.getElementById('failModal').style.display = 'none'; }
+        function escapeHtmlAttr(value) {
+          return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/'/g, '&#39;');
+        }
+
+        function viewReceiptFileByRow(btn) {
+          var id = btn.getAttribute('data-id') || '';
+          var fileName = btn.getAttribute('data-filename') || '';
+          var fileType = btn.getAttribute('data-filetype') || '';
+          return viewReceiptFile(id, fileName, fileType);
+        }
+
+        function deleteRecordByRow(btn) {
+          var id = btn.getAttribute('data-id') || '';
+          return deleteRecord(id);
+        }
+
+        async function viewReceiptFile(id, fileName, fileType) {
+          try {
+            var history = window.smartReceiptHistoryCache || [];
+            var rec = history.find(function (item) {
+              return String(item.id) === String(id);
+            }) || null;
+
+            var name = String(fileName || (rec && rec.fileName) || '');
+            var type = String(fileType || (rec && rec.fileType) || '').toLowerCase();
+            var dataUrl = rec && rec.fileDataUrl ? String(rec.fileDataUrl) : '';
+
+            // ถ้า cache ไม่มีไฟล์ ให้ลองอ่านเอกสาร Firestore โดยตรง
+            if (!dataUrl && window.getDocs && window.collection && window.db) {
+              try {
+                var snap = await window.getDocs(window.collection(window.db, 'smartReceiptHistory'));
+                snap.forEach(function(docSnap) {
+                  var d = docSnap.data() || {};
+                  if (String(docSnap.id) === String(id)) {
+                    rec = { ...d, id: docSnap.id, fileKey: d.id || docSnap.id };
+                    name = name || String(d.fileName || '');
+                    type = type || String(d.fileType || '').toLowerCase();
+                    dataUrl = d.fileDataUrl ? String(d.fileDataUrl) : '';
+                  }
+                });
+              } catch (cloudReadError) {
+                console.warn('อ่านไฟล์จาก Firestore โดยตรงไม่สำเร็จ:', cloudReadError);
+              }
+            }
+
+            if (dataUrl) {
+              var isPdfCloud = type.indexOf('pdf') !== -1 || name.toLowerCase().endsWith('.pdf');
+
+              if (isPdfCloud) {
+                var pdfBlob = dataUrlToBlob(dataUrl);
+                var pdfUrl = URL.createObjectURL(pdfBlob);
+                // ใช้ลิงก์แทน window.open หลัง await เพื่อไม่ให้ popup blocker บล็อก
+                var aPdf = document.createElement('a');
+                aPdf.href = pdfUrl;
+                aPdf.target = '_blank';
+                aPdf.rel = 'noopener';
+                aPdf.download = name || 'receipt.pdf';
+                document.body.appendChild(aPdf);
+                aPdf.click();
+                document.body.removeChild(aPdf);
+                setTimeout(function(){ URL.revokeObjectURL(pdfUrl); }, 60000);
+                return;
+              }
+
+              var img = document.getElementById('previewReceiptImg');
+              var modal = document.getElementById('imageModal');
+              if (!img || !modal) throw new Error('ไม่พบหน้าต่างแสดงรูปบิล');
+              document.getElementById('imageModalTitle').innerText = 'รูปภาพบิล: ' + name;
+              img.onload = function(){ modal.style.display = 'flex'; };
+              img.onerror = function(){ alert('ไฟล์รูปภาพไม่สามารถแสดงได้'); };
+              img.src = dataUrl;
+              // เผื่อรูปถูก cache จนไม่ยิง onload
+              if (img.complete && img.naturalWidth > 0) modal.style.display = 'flex';
+              return;
+            }
+
+            // ไฟล์เก่าหรือไฟล์ที่ไม่ได้เก็บใน Firestore: ใช้ IndexedDB
+            var localFileKey = rec && (rec.fileKey || rec.originalFileId || rec.id);
+            var blob = await getFileFromDB(localFileKey);
+
+            if (!blob && String(localFileKey) !== String(id)) {
+              blob = await getFileFromDB(id);
+            }
+
+            if (!blob) {
+              alert('รายการนี้ไม่มีไฟล์บิลที่เก็บไว้ จึงไม่สามารถเปิดไฟล์ได้');
+              return;
+            }
+
+            var localUrl = URL.createObjectURL(blob);
+            var isPdf = String(blob.type || type).toLowerCase().indexOf('pdf') !== -1 ||
+                        name.toLowerCase().endsWith('.pdf');
+
+            if (isPdf) {
+              var aLocal = document.createElement('a');
+              aLocal.href = localUrl;
+              aLocal.target = '_blank';
+              aLocal.rel = 'noopener';
+              aLocal.download = name || 'receipt.pdf';
+              document.body.appendChild(aLocal);
+              aLocal.click();
+              document.body.removeChild(aLocal);
+              setTimeout(function(){ URL.revokeObjectURL(localUrl); }, 60000);
+            } else {
+              var img2 = document.getElementById('previewReceiptImg');
+              var modal2 = document.getElementById('imageModal');
+              if (!img2 || !modal2) throw new Error('ไม่พบหน้าต่างแสดงรูปบิล');
+              document.getElementById('imageModalTitle').innerText = 'รูปภาพบิล: ' + name;
+              img2.onload = function(){ modal2.style.display = 'flex'; };
+              img2.onerror = function(){ alert('ไฟล์รูปภาพไม่สามารถแสดงได้'); };
+              img2.setAttribute('data-object-url', localUrl);
+              img2.src = localUrl;
+              if (img2.complete && img2.naturalWidth > 0) modal2.style.display = 'flex';
+            }
+          } catch (error) {
+            console.error('เปิดไฟล์บิลไม่สำเร็จ:', error);
+            alert('เปิดไฟล์บิลไม่สำเร็จ: ' + error.message);
+          }
+        }
+
+        function dataUrlToBlob(dataUrl) {
+          var parts = String(dataUrl).split(',');
+          var mimeMatch = parts[0].match(/data:([^;]+);base64/i);
+          var mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+          var binary = atob(parts[1] || '');
+          var bytes = new Uint8Array(binary.length);
+          for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          return new Blob([bytes], { type: mime });
+        }
+
+        window.viewReceiptFile = viewReceiptFile;
+        function closeImageModal() {
+          var modal = document.getElementById('imageModal');
+          var img = document.getElementById('previewReceiptImg');
+
+          if (modal) modal.style.display = 'none';
+          if (img) {
+            // ยกเลิก handler เดิมก่อนปิด เพื่อไม่ให้การตั้ง src ว่าง
+            // ถูกตีความเป็นไฟล์เสียและขึ้นข้อความเตือนหลังปิดหน้าต่าง
+            img.onload = null;
+            img.onerror = null;
+
+            var objectUrl = img.getAttribute('data-object-url');
+            if (objectUrl) {
+              try { URL.revokeObjectURL(objectUrl); } catch (e) {}
+              img.removeAttribute('data-object-url');
+            }
+
+            // ไม่ตั้ง src เป็นค่าว่าง เพราะ Chrome อาจยิง onerror ซ้ำ
+            img.removeAttribute('src');
+          }
+        }
+
+        function viewExtractedText(id) {
+          var history = window.smartReceiptHistoryCache || [];
+          var rec = history.filter(function (i) { return String(i.id) === String(id); })[0];
+          var text = rec && rec.extractedText ? rec.extractedText : '';
+          var reason = rec && rec.reason ? rec.reason : '';
+          var status = rec && rec.status ? rec.status : '';
+          var message = status + (status && (reason || text) ? '\n\n' : '') +
+            (reason ? 'เหตุผล/คำอธิบาย:\n' + reason + '\n\n' : '') +
+            (text ? 'ข้อความที่ AI อ่านได้:\n' + text : '(ไม่มีข้อมูลรายละเอียด)');
+          document.getElementById('extractedTextBox').innerText = message;
+          document.getElementById('textModal').style.display = 'flex';
+        }
+        function closeTextModal() { document.getElementById('textModal').style.display = 'none'; }
+
+        async function handleUpload(e) {
+          e.preventDefault();
+          var fileInput = document.getElementById('docFile');
+          if (fileInput.files.length === 0) return;
+
+          var file = fileInput.files[0];
+          var docType = document.getElementById('documentType').value;
+          var selectedCompany = document.getElementById('companyName').value;
+          var carPlate = document.getElementById('carPlate').value;
+
+          if (docType === 'บิลน้ำมัน' && !carPlate) {
+            alert('กรุณาเลือกเลขทะเบียนรถให้ถูกต้องสำหรับบิลน้ำมัน');
+            return;
+          }
+          
+
+          var scanBtn = document.getElementById('scanBtn');
+          scanBtn.disabled = true;
+          scanBtn.innerText = 'กำลังให้ Gemini AI ตรวจสอบ...';
+          var statusBox = document.getElementById('ocrStatus');
+          statusBox.style.display = 'block';
+
+            try {
+    // รอ Firebase Anonymous Login ให้เสร็จก่อนใช้งาน Firestore ทุกครั้ง
+    // เพื่อป้องกันมือถือยิงคำสั่งอ่าน/เขียนก่อน auth พร้อม
+    await firebaseAuthReady;
+
+    // ดึงข้อมูลบริษัทจาก Firestore
+    var snapshot = await db.collection('companies').get();
+
+    var suppliers = [];
+
+    snapshot.forEach(function(doc) {
+        var data = doc.data();
+
+        suppliers.push({
+            id: doc.id,
+            name: data.companyName || '',
+            taxId: data.taxID || '',
+            address: data.address || '',
+            keywords: data.keywords || ''
+        });
+    });
+
+    var supplier = suppliers.find(function(s) {
+        return s.name === selectedCompany;
+    });
+
+    if (!supplier) {
+        alert('ไม่พบข้อมูลบริษัทที่เลือกใน Firestore');
+        return;
+    }
+
+    var dataUrl = await readFileAsDataUrl(file);
+            var dataUrl = await readFileAsDataUrl(file);
+            var aiResult = await analyzeReceiptWithGemini(file, dataUrl, supplier.name, supplier.taxId, docType, carPlate);
+
+            var billDateStr = (aiResult && aiResult.docDate) ? aiResult.docDate : new Date().toISOString().split('T')[0];
+            var dateObj = new Date(billDateStr);
+            if (isNaN(dateObj.getTime())) {
+              dateObj = new Date();
+              billDateStr = new Date().toISOString().split('T')[0];
+            }
+
+            var day = dateObj.getDate();
+            var month = String(dateObj.getMonth() + 1).padStart(2, '0');
+            var cycle = day <= 15 ? '1-15' : '16-31';
+            var recordId = Date.now();
+
+            // แสดงผล AI ในแถบผลตรวจเฉพาะกิจ และค้างไว้บนหน้าสแกน
+            // จนกว่าจะตรวจเอกสารรายการใหม่ เพื่อไม่ให้รายละเอียดเหตุผลหายไปเอง
+            var resultReason = (aiResult && aiResult.reason) ? aiResult.reason : 'AI ไม่ได้ส่งคำอธิบายรายละเอียด';
+            var scanResultBox = document.getElementById('scanResultBox');
+            var scanResultTitle = document.getElementById('scanResultTitle');
+            var scanResultReason = document.getElementById('scanResultReason');
+            var isPassResult = !!(aiResult && aiResult.match);
+            if (scanResultBox && scanResultTitle && scanResultReason) {
+              scanResultBox.className = 'scan-result-box ' + (isPassResult ? 'pass' : 'fail');
+              scanResultTitle.innerText = isPassResult ? 'ตรวจสอบผ่าน' : 'ตรวจสอบไม่ผ่าน';
+              scanResultReason.innerText = 'รายละเอียดเหตุผล: ' + resultReason;
+              scanResultBox.style.display = 'block';
+            }
+
+            var newRecord = {
+              id: recordId,
+              createdAt: recordId,
+              date: billDateStr,
+              month: month,
+              year: dateObj.getFullYear(),
+              cycle: cycle,
+              fileName: file.name,
+              fileType: file.type,
+              docType: docType,
+              companyName: selectedCompany,
+              carPlate: carPlate || '-',
+              extractedText: (aiResult && aiResult.extractedText) ? aiResult.extractedText : '',
+              status: (aiResult && aiResult.match) ? 'ถูกต้อง (ผ่าน)' : 'ไม่ผ่าน',
+              statusClass: (aiResult && aiResult.match) ? 'badge-success' : 'badge-danger',
+              reason: (aiResult && aiResult.reason) ? aiResult.reason : 'AI ไม่ได้ส่งคำอธิบายรายละเอียด',
+              isPass: (aiResult && aiResult.match) ? aiResult.match : false,
+            };
+
+            // บันทึกประวัติด้วยข้อมูลข้อความเท่านั้นก่อน (ไม่แนบรูปขนาดใหญ่เข้า Firestore)
+            // ถ้า Anonymous Auth พร้อม ให้ใช้สิทธิ์นั้น; ถ้า Auth ล้มเหลว จะลองเขียนตรงหนึ่งครั้ง
+            // เพื่อให้ทราบชัดเจนว่ากฎ Firestore อนุญาตการสร้างข้อมูลหรือไม่
+            var savedHistoryDoc = null;
+            var authError = null;
+            try {
+              await firebaseAuthReady;
+            } catch (e) {
+              authError = e;
+              console.warn('Anonymous Auth ไม่พร้อม:', e);
+            }
+            try {
+              savedHistoryDoc = await db.collection('smartReceiptHistory').add(newRecord);
+            } catch (writeErr) {
+              console.error('บันทึกประวัติ Firestore ไม่สำเร็จ:', writeErr);
+              var detail = writeErr && writeErr.message ? writeErr.message : String(writeErr);
+              if (authError) detail += ' | Auth: ' + (authError.message || String(authError));
+              throw new Error('บันทึกประวัติไม่สำเร็จ: ' + detail);
+            }
+
+            // เก็บไฟล์ต้นฉบับไว้ใน IndexedDB ของเครื่องนี้ (ถ้าทำได้)
+            try {
+              await saveFileToDB(recordId, file);
+            } catch (fileErr) {
+              console.warn('เก็บไฟล์ในเครื่องไม่สำเร็จ แต่ประวัติถูกบันทึกแล้ว:', fileErr);
+            }
+
+            statusBox.style.display = 'none';
+            if (scanResultBox && scanResultTitle && scanResultReason) {
+              scanResultTitle.innerText = (isPassResult ? 'ตรวจสอบผ่าน' : 'ตรวจสอบไม่ผ่าน') + ' — บันทึกประวัติเรียบร้อยแล้ว';
+              scanResultReason.innerText = 'รายละเอียดเหตุผล: ' + resultReason;
+              scanResultBox.style.display = 'block';
+            }
+            await loadHistory();
+            await loadDashboardStats();
+            document.getElementById('docForm').reset();
+
+            if (!(aiResult && aiResult.match)) {
+              showFailModal(resultReason);
+            }
+    } catch (err) {
+        console.error(err);
+        statusBox.style.display = 'none';
+        alert('เกิดข้อผิดพลาด: ' + err.message);
+    } finally {
+        scanBtn.disabled = false;
+        scanBtn.innerText = 'ให้ AI ตรวจสอบเอกสาร';
+    }
+}
+        async function fetchSmartReceiptHistory() {
+          var snapshot = await window.getDocs(
+            window.collection(window.db, 'smartReceiptHistory')
+          );
+          var history = snapshot.docs.map(function(doc) {
+            var data = doc.data() || {};
+            return {
+              ...data,
+              id: doc.id,
+              fileKey: data.id || doc.id
+            };
+          });
+          history.sort(function(a, b) {
+            var aTime = Number(a.createdAt || a.id || 0);
+            var bTime = Number(b.createdAt || b.id || 0);
+
+            // รายการใหม่สุดอยู่ด้านบน โดยใช้เวลาที่บันทึกจริง ไม่ใช่วันที่บนใบเสร็จ
+            if (aTime && bTime && aTime !== bTime) return bTime - aTime;
+
+            // สำรองสำหรับรายการเก่าที่ไม่มี createdAt
+            return String(b.date || '').localeCompare(String(a.date || '')) ||
+                   String(b.id || '').localeCompare(String(a.id || ''));
+          });
+          window.smartReceiptHistoryCache = history;
+          return history;
+        }
+
+        async function loadHistory() {
+          try {
+            var history = await fetchSmartReceiptHistory();
+            console.log('โหลดประวัติเอกสารจาก Firestore สำเร็จ:', history);
+
+            var tbody = document.getElementById('historyTableBody');
+            if (!tbody) return history;
+
+            if (history.length === 0) {
+              tbody.innerHTML =
+                '<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">ยังไม่มีประวัติการบันทึกเอกสาร</td></tr>';
+              return history;
+            }
+
+            tbody.innerHTML = '';
+            history.forEach(function(item) {
+              var viewBtn =
+                '<button class="btn-eye" title="ดูไฟล์เอกสาร" ' +
+                'onclick="viewReceiptFileByRow(this)" ' +
+                'data-id="' + escapeHtmlAttr(String(item.id || '')) + '" ' +
+                'data-filename="' + escapeHtmlAttr(String(item.fileName || '')) + '" ' +
+                'data-filetype="' + escapeHtmlAttr(String(item.fileType || '')) + '">👁</button>';
+
+              var textBtn =
+                '<button class="btn-eye" title="ดูรายละเอียด AI" onclick="viewExtractedText(' +
+                JSON.stringify(item.id) +
+                ')">&#128126;</button>';
+
+              var reasonLine = item.reason
+                ? '<br><small style="color:var(--text-muted);">' + item.reason + '</small>'
+                : '<br><small style="color:var(--text-muted);">ไม่มีคำอธิบาย</small>';
+
+              tbody.innerHTML +=
+                '<tr>' +
+                '<td>' + (item.date || '') +
+                '<br><small style="color:var(--text-muted);">(รอบ ' + (item.cycle || '') + ')</small></td>' +
+                '<td>' + (item.fileName || '') + '</td>' +
+                '<td>' + (item.docType || '') + '</td>' +
+                '<td>' + (item.companyName || '') + '</td>' +
+                '<td><span class="' + (item.statusClass || '') + '">' + (item.status || '') + '</span>' +
+                reasonLine + '</td>' +
+                '<td>' + viewBtn + textBtn +
+                '<button class="btn-danger" onclick="deleteRecordByRow(this)" ' +
+                'data-id="' + escapeHtmlAttr(String(item.id || '')) + '">ลบ</button></td>' +
+                '</tr>';
+            });
+            return history;
+          } catch (error) {
+            console.error('โหลดประวัติเอกสารไม่สำเร็จ:', error);
+            alert('โหลดข้อมูลประวัติไม่สำเร็จ: ' + error.message);
+            return [];
+          }
+        }
+      async function deleteRecord(id) {
+        if (!confirm('ต้องการลบรายการนี้หรือไม่?')) return;
+
+        try {
+          var historyNow = window.smartReceiptHistoryCache || [];
+          var recToDelete = historyNow.find(function (item) {
+            return String(item.id) === String(id);
+          });
+
+          if (typeof window.deleteSmartReceiptHistory !== 'function') {
+            throw new Error('ฟังก์ชันลบข้อมูล Firebase ยังไม่พร้อม');
+          }
+
+          await window.deleteSmartReceiptHistory(String(id));
+
+          var fileKey = recToDelete && (recToDelete.fileKey || recToDelete.originalFileId || recToDelete.id);
+          if (fileKey) await deleteFileFromDB(fileKey);
+          if (fileKey && String(fileKey) !== String(id)) await deleteFileFromDB(id);
+
+          await loadHistory();
+          await loadDashboardStats();
+
+          alert('ลบรายการเรียบร้อยแล้ว!');
+        } catch (error) {
+          console.error('ลบรายการไม่สำเร็จ:', error);
+          alert('ลบรายการไม่สำเร็จ: ' + error.message);
+        }
+      }
+
+      window.deleteRecord = deleteRecord;
+
+      async function loadDashboardStats() {
+          try {
+            var history = await fetchSmartReceiptHistory();
+            var fMonth = document.getElementById('filterMonth').value;
+            var fCycle = document.getElementById('filterCycle').value;
+
+            var filtered = history.filter(function (item) {
+              return (fMonth === 'all' || item.month === fMonth) &&
+                     (fCycle === 'all' || item.cycle === fCycle);
+            });
+
+            var total = filtered.length;
+            var passCount = filtered.filter(function (i) { return i.isPass; }).length;
+            var failItems = filtered.filter(function (i) { return !i.isPass; });
+
+            document.getElementById('statTotal').innerText = total;
+            document.getElementById('statPass').innerText = passCount;
+            document.getElementById('statFail').innerText = failItems.length;
+
+            var failCounts = {};
+            failItems.forEach(function (item) {
+              var type = item.docType || 'ไม่ระบุประเภท';
+              failCounts[type] = (failCounts[type] || 0) + 1;
+            });
+
+            var breakdownText = [];
+            Object.keys(failCounts).forEach(function (type) {
+              breakdownText.push(type + ': ' + failCounts[type] + ' บิล');
+            });
+
+            var breakdownEl = document.getElementById('failTypeBreakdown');
+            breakdownEl.innerText = breakdownText.length > 0 ? breakdownText.join(', ') : 'ไม่มีบิลที่ไม่ผ่าน';
+
+            var companyStats = {};
+            filtered.forEach(function (item) {
+              if (!companyStats[item.companyName]) companyStats[item.companyName] = { total: 0, pass: 0, fail: 0 };
+              companyStats[item.companyName].total++;
+              if (item.isPass) companyStats[item.companyName].pass++;
+              else companyStats[item.companyName].fail++;
+            });
+
+            var compTbody = document.getElementById('companyStatsTableBody');
+            var compKeys = Object.keys(companyStats);
+            if (compKeys.length === 0) {
+              compTbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">ไม่มีข้อมูลสถิติ</td></tr>';
+            } else {
+              compTbody.innerHTML = '';
+              compKeys.forEach(function (comp) {
+                var s = companyStats[comp];
+                compTbody.innerHTML += '<tr><td><strong>' + comp + '</strong></td><td>' + s.total + '</td>' +
+                  '<td style="color: var(--success-green); font-weight: bold;">' + s.pass + '</td>' +
+                  '<td style="color: var(--danger-red); font-weight: bold;">' + s.fail + '</td></tr>';
+              });
+            }
+          } catch (error) {
+            console.error('โหลด Dashboard ไม่สำเร็จ:', error);
+          }
+        }
+        async function exportReportToExcel() {
+          var history = await fetchSmartReceiptHistory();
+          var fMonth = document.getElementById('filterMonth').value;
+          var fCycle = document.getElementById('filterCycle').value;
+
+          var filtered = history.filter(function (item) {
+            return (fMonth === 'all' || item.month === fMonth) && (fCycle === 'all' || item.cycle === fCycle);
+          });
+
+          if (filtered.length === 0) { alert('ไม่มีข้อมูลสำหรับส่งออก'); return; }
+
+          var companyStats = {};
+          filtered.forEach(function (item) {
+            if (!companyStats[item.companyName]) companyStats[item.companyName] = { total: 0, pass: 0, fail: 0 };
+            companyStats[item.companyName].total++;
+            if (item.isPass) companyStats[item.companyName].pass++;
+            else companyStats[item.companyName].fail++;
+          });
+
+          var csvContent = "\uFEFF";
+          csvContent += "=== รายงานสรุป Smart Receipt (Gemini AI) ===\n";
+          csvContent += "ชื่อบริษัทลูกค้า,จำนวนบิลทั้งหมด,ถูกต้อง (ผ่าน),ไม่ถูกต้อง\n";
+                      Object.keys(companyStats).forEach(function(comp) {
+
+            var s = companyStats[comp];
+            csvContent += '"' + comp + '",' + s.total + ',' + s.pass + ',' + s.fail + '\n';
+          });
+
+          csvContent += "\n\n=== รายละเอียดประวัติทั้งหมด ===\n";
+          csvContent += "วันที่ในบิล,รอบเบิกจ่าย,ชื่อไฟล์,ประเภทเอกสาร,บริษัทลูกค้า,ทะเบียนรถ,ผลการตรวจสอบ,เหตุผล\n";
+          filtered.forEach(function (item) {
+            csvContent += '"' + item.date + '","รอบ ' + item.cycle + '","' + item.fileName + '","' + item.docType + '","' + item.companyName + '","' + (item.carPlate || '-') + '","' + (item.status || '') + '","' + (item.reason || '') + '"\n';
+          });
+
+          var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = 'Smart_Receipt_Gemini_Report.csv';
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          }
+          
+        window.onload = initData;
+  function readFileAsDataUrl(file) {
+          return new Promise(function (resolve, reject) {
+            var r = new FileReader();
+            r.onload = function (e) { resolve(e.target.result); };
+            r.onerror = reject;
+            r.readAsDataURL(file);
+          });
+        }
+        </script>
+        <script>
+// ใช้ Firebase Compat ชุดเดียวกับด้านบน เพื่อไม่ให้เกิดการ initialize Firebase ซ้ำ
+// และทำให้ฟังก์ชัน Firestore ที่ส่วนอื่นของระบบเรียกผ่าน window ใช้งานได้ทั้งมือถือและคอม
+window.db = db;
+window.auth = auth;
+window.collection = function (dbRef, path) { return dbRef.collection(path); };
+window.addDoc = function (collectionRef, data) { return collectionRef.add(data); };
+window.getDocs = function (queryRef) { return queryRef.get(); };
+window.deleteDoc = function (docRef) { return docRef.delete(); };
+window.doc = function (dbRef, path, id) { return dbRef.collection(path).doc(String(id)); };
+window.signInAnonymously = function () { return auth.signInAnonymously(); };
+window.deleteSmartReceiptHistory = async function (id) {
+  var safeId = String(id);
+  await db.collection('smartReceiptHistory').doc(safeId).delete();
+};
+console.log('Firebase bridge พร้อมใช้งาน');
+</script>
+
+</body>
+
+</html>
